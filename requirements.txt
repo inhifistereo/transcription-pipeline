@@ -1,0 +1,6 @@
+yt-dlp
+azure-storage-blob
+whisper
+ffmpeg-python
+soundfile
+aiohttp
