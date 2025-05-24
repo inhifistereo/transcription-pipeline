@@ -24,3 +24,12 @@ async def download_blob_async(container, blob_name, file_path):
         with open(file_path, 'wb') as f:
             f.write(await stream.readall())
     logging.info(f"Downloaded {blob_name} from {container}")
+
+async def list_blobs_async(container: str, prefix: str = None):
+    """List blobs in a container, optionally filtered by prefix."""
+    container_client = blob_service_client.get_container_client(container)
+    async with container_client:
+        blobs = []
+        async for blob in container_client.list_blobs(name_starts_with=prefix):
+            blobs.append(blob.name)
+    return blobs

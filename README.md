@@ -25,6 +25,7 @@ This project provides a modular, async-friendly Python pipeline to:
 - `trigger` — **(for Azure Function Blob Trigger integration)**
   - This container is monitored by the Azure Function.
   - When a new blob is added, the function is triggered to start processing.
+- `videos-processed` — for processed .mp4 files (videos are moved here after audio extraction)
 
 ## Environment Variables
 Set the following environment variables (e.g., in your deployment or `.env`):
@@ -33,6 +34,7 @@ Set the following environment variables (e.g., in your deployment or `.env`):
 - `AZURE_BLOB_VIDEOS_CONTAINER` — container for videos (default: `videos`)
 - `AZURE_BLOB_AUDIO_CONTAINER` — container for audio (default: `audio`)
 - `AZURE_BLOB_TRANSCRIPTS_CONTAINER` — container for transcripts (default: `transcripts`)
+- `AZURE_BLOB_PROCESSED_VIDEOS_CONTAINER` — container for processed videos (**required**, e.g., `videos-processed`)
 - `AZURE_SUBSCRIPTION_ID` — your Azure subscription ID **(for Azure Function)**
 - `AZURE_RESOURCE_GROUP` — your Azure resource group **(for Azure Function)**
 - `AZURE_CONTAINER_APP_NAME` — your Azure Container App name **(for Azure Function)**
@@ -44,10 +46,17 @@ Set the following environment variables (e.g., in your deployment or `.env`):
    ```bash
    pip install -r requirements.txt
    ```
-2. Run the pipeline for a video:
+2. Download and upload videos to Azure Blob Storage:
    ```bash
-   python run_pipeline.py <video_id_or_url>
+   python -c "import asyncio; from download_and_prepare import download_and_upload_video; asyncio.run(download_and_upload_video('<video_id>'))"
    ```
+   This will place the video in the `videos` container.
+
+3. Run the pipeline to process all videos already in the `videos` container:
+   ```bash
+   python run_pipeline.py
+   ```
+   This will extract audio, upload to `audio`, move processed videos to `videos-processed`, and transcribe audio.
 
 ## Docker
 Build and run with Docker:
@@ -83,3 +92,8 @@ You can automate the pipeline using an Azure Function with a Blob Trigger:
 - Requires ffmpeg installed in the environment
 
 ---
+
+## Changes
+- The pipeline now requires the `videos-processed` container for processed videos.
+- `run_pipeline.py` no longer downloads videos; it processes those already in the `videos` container.
+- Download/upload and audio extraction/upload are now separate steps.
