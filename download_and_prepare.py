@@ -1,39 +1,46 @@
 import asyncio
 import logging
-from utils.azure_blob import upload_blob_async, download_blob_async
+from utils.azure_blob import download_blob_async, upload_blob_async
 from utils.ffmpeg_tools import extract_audio_to_wav
-import yt_dlp
 import os
+import math
+import tempfile
+import ffmpeg
 
-async def download_and_upload_video(video_id: str, videos_container: str = 'videos'):
-    """Download a YouTube video and upload to Azure Blob Storage."""
-    logging.info(f"Downloading video {video_id}")
-    ydl_opts = {
-        'format': 'mp4',
-        'outtmpl': f'{video_id}.mp4',
-        'quiet': True,
-        'noplaylist': True,
-    }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([f'https://www.youtube.com/watch?v={video_id}'])
-    await upload_blob_async(f'{video_id}.mp4', container=videos_container, blob_name=f'{video_id}.mp4')
-    logging.info(f"Uploaded {video_id}.mp4 to {videos_container}")
-    if os.path.exists(f'{video_id}.mp4'):
-        os.remove(f'{video_id}.mp4')
-
-async def extract_audio_from_blob_and_upload(video_blob_name: str, videos_container: str = 'videos', audio_container: str = 'audio', processed_container: str = 'videos-processed'):
-    """Download video from blob, extract audio, upload audio, move video to processed container."""
-    import tempfile
+async def chunk_and_upload_audio(video_blob_name: str, videos_container: str = 'videos', audio_container: str = 'audio', processed_container: str = 'videos-processed', chunk_length_sec: int = 1800):
+    """
+    Download video from blob, split audio into 30-min chunks, upload each chunk to audio container, move video to processed container.
+    """
+    import soundfile as sf
     video_id = os.path.splitext(os.path.basename(video_blob_name))[0]
+    # Download video to temp file
     with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_video:
         tmp_video_path = tmp_video.name
     await download_blob_async(videos_container, video_blob_name, tmp_video_path)
-    wav_path = await extract_audio_to_wav(tmp_video_path, f'{video_id}.wav')
-    await upload_blob_async(wav_path, container=audio_container, blob_name=f'{video_id}.wav')
-    logging.info(f"Uploaded audio {video_id}.wav to {audio_container}")
+    # Extract full audio to temp wav
+    full_wav_path = f'{video_id}_full.wav'
+    await extract_audio_to_wav(tmp_video_path, full_wav_path)
+    # Split audio into chunks
+    data, samplerate = sf.read(full_wav_path)
+    total_sec = len(data) / samplerate
+    num_chunks = math.ceil(total_sec / chunk_length_sec)
+    chunk_paths = []
+    for i in range(num_chunks):
+        start = i * chunk_length_sec
+        end = min((i + 1) * chunk_length_sec, total_sec)
+        chunk_file = f'{video_id}_chunk_{i+1}.wav'
+        (
+            ffmpeg
+            .input(full_wav_path, ss=start, t=(end - start))
+            .output(chunk_file, acodec='pcm_s16le', ac=1, ar='16k')
+            .overwrite_output()
+            .run(quiet=True)
+        )
+        await upload_blob_async(chunk_file, container=audio_container, blob_name=chunk_file)
+        logging.info(f"Uploaded audio chunk {chunk_file} to {audio_container}")
+        chunk_paths.append(chunk_file)
     # Move video to processed container
     from azure.storage.blob.aio import BlobServiceClient
-    import os
     AZURE_STORAGE_ACCOUNT_NAME = os.getenv('AZURE_STORAGE_ACCOUNT_NAME')
     AZURE_STORAGE_ACCOUNT_KEY = os.getenv('AZURE_STORAGE_ACCOUNT_KEY')
     blob_service_client = BlobServiceClient(
@@ -47,12 +54,11 @@ async def extract_audio_from_blob_and_upload(video_blob_name: str, videos_contai
     await src_client.delete_blob()
     logging.info(f"Moved {video_blob_name} to {processed_container}")
     # Clean up
-    if os.path.exists(tmp_video_path):
-        os.remove(tmp_video_path)
-    if os.path.exists(wav_path):
-        os.remove(wav_path)
+    for f in [tmp_video_path, full_wav_path] + chunk_paths:
+        if os.path.exists(f):
+            os.remove(f)
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
     import sys
-    asyncio.run(download_and_upload_video(sys.argv[1]))
+    logging.basicConfig(level=logging.INFO)
+    asyncio.run(chunk_and_upload_audio(sys.argv[1]))
