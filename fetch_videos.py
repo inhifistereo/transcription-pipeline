@@ -2,7 +2,8 @@ import yt_dlp
 import logging
 import sys
 import asyncio
-from download_and_prepare import download_and_upload_video
+from utils.azure_blob import upload_blob_async
+import os
 
 def parse_input(input_arg):
     import json
@@ -38,6 +39,21 @@ async def fetch_video_ids(playlist_url):
             video_ids.append(entry['id'])
     logging.info(f"Fetched {len(video_ids)} video IDs from playlist.")
     return video_ids
+
+async def download_and_upload_video(video_id: str, videos_container: str = 'videos'):
+    logging.info(f"Downloading video {video_id}")
+    ydl_opts = {
+        'format': 'mp4',
+        'outtmpl': f'{video_id}.mp4',
+        'quiet': True,
+        'noplaylist': True,
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.download([f'https://www.youtube.com/watch?v={video_id}'])
+    await upload_blob_async(f'{video_id}.mp4', container=videos_container, blob_name=f'{video_id}.mp4')
+    logging.info(f"Uploaded {video_id}.mp4 to {videos_container}")
+    if os.path.exists(f'{video_id}.mp4'):
+        os.remove(f'{video_id}.mp4')
 
 async def main():
     logging.basicConfig(level=logging.INFO)
