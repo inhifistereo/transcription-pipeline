@@ -43,10 +43,11 @@ async def fetch_video_ids(playlist_url):
 async def download_and_upload_video(video_id: str, videos_container: str = 'videos'):
     logging.info(f"Downloading video {video_id}")
     ydl_opts = {
-        'format': 'mp4',
+        'format': 'bestvideo+bestaudio/best',  # ensure both video and audio are downloaded
         'outtmpl': f'{video_id}.mp4',
         'quiet': True,
         'noplaylist': True,
+        'merge_output_format': 'mp4',
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([f'https://www.youtube.com/watch?v={video_id}'])
