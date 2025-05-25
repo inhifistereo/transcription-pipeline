@@ -60,8 +60,12 @@ async def main():
     logging.basicConfig(level=logging.INFO)
     if len(sys.argv) == 2:
         input_arg = sys.argv[1]
+        # If the input is a path to a .json file, read it
+        if input_arg.lower().endswith('.json') and os.path.exists(input_arg):
+            with open(input_arg, 'r', encoding='utf-8') as f:
+                input_arg = f.read()
     else:
-        print("Usage: fetch_videos.py <playlist_url|video_id|[\"id1\",...] >")
+        print("Usage: fetch_videos.py <playlist_url|video_id|[\"id1\",...]|file.json >")
         sys.exit(1)
     ids = parse_input(input_arg)
     if ids is None:
