@@ -58,34 +58,38 @@ async def transcribe_and_upload(video_id: str):
         result = json.loads(transcript)
         all_segments.extend(result.get('segments', []))
         os.remove(chunk_path)
-    # Save merged transcript as JSON
-    merged = {"segments": all_segments}
-    with open(transcript_path, 'w') as f:
-        json.dump(merged, f, indent=2)
-    # Upload transcript
-    await upload_blob_async(transcript_path, container='transcripts', blob_name=transcript_blob)
-    logging.info(f"Transcript uploaded for {video_id}")
-    # Clean up
-    os.remove(audio_path)
-    os.remove(transcript_path)
-    # After downloading and chunking audio, before merging transcript:
+    # Run diarization on the full audio file
     diarization_segments = diarize_audio(audio_path)
     # Save diarization segments as JSON
     diarization_path = f"/tmp/{video_id}.speakers.json"
     with open(diarization_path, 'w') as f:
         json.dump(diarization_segments, f, indent=2)
     await upload_blob_async(diarization_path, container='transcripts', blob_name=f'{video_id}.speakers.json')
+    # Annotate transcript segments with speaker labels
+    for seg in all_segments:
+        seg['speaker'] = None
+        for d in diarization_segments:
+            if seg['start'] >= d['start'] and seg['end'] <= d['end']:
+                seg['speaker'] = d['speaker']
+                break
+    # Save merged transcript as JSON
+    merged = {"segments": all_segments}
+    with open(transcript_path, 'w') as f:
+        json.dump(merged, f, indent=2)
+    await upload_blob_async(transcript_path, container='transcripts', blob_name=transcript_blob)
     # Generate readable speaker script
     speaker_script_path = f"/tmp/{video_id}_speaker_script.txt"
     with open(speaker_script_path, 'w') as f:
-        for seg in diarization_segments:
-            # Find transcript text for this segment
-            text = ''
-            for s in all_segments:
-                if s['start'] >= seg['start'] and s['end'] <= seg['end']:
-                    text += s['text'].strip() + ' '
-            f.write(f"{seg['speaker']} - {seg['start']:.2f} to {seg['end']:.2f}: {text.strip()}\n\n")
+        for seg in all_segments:
+            speaker = seg.get('speaker', 'Unknown')
+            f.write(f"{speaker} - {seg['start']:.2f} to {seg['end']:.2f}: {seg['text'].strip()}\n\n")
     await upload_blob_async(speaker_script_path, container='transcripts', blob_name=f'{video_id}_speaker_script.txt')
+    logging.info(f"Transcript and speaker script uploaded for {video_id}")
+    # Clean up
+    os.remove(audio_path)
+    os.remove(transcript_path)
+    os.remove(diarization_path)
+    os.remove(speaker_script_path)
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
