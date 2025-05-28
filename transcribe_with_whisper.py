@@ -7,6 +7,7 @@ import ffmpeg
 import math
 import tempfile
 import json
+from pyannote.audio import Pipeline
 
 async def split_audio_to_chunks(audio_path: str, chunk_length_sec: int = 1800) -> list:
     """Split audio into chunks of chunk_length_sec seconds. Returns list of chunk file paths."""
@@ -28,6 +29,18 @@ async def split_audio_to_chunks(audio_path: str, chunk_length_sec: int = 1800) -
         )
         chunk_paths.append(chunk_file)
     return chunk_paths
+
+def diarize_audio(audio_path):
+    pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization")
+    diarization = pipeline(audio_path)
+    segments = []
+    for segment, _, speaker in diarization.itertracks(yield_label=True):
+        segments.append({
+            "start": segment.start,
+            "end": segment.end,
+            "speaker": speaker
+        })
+    return segments
 
 async def transcribe_and_upload(video_id: str):
     audio_blob = f"{video_id}.wav"
@@ -55,6 +68,24 @@ async def transcribe_and_upload(video_id: str):
     # Clean up
     os.remove(audio_path)
     os.remove(transcript_path)
+    # After downloading and chunking audio, before merging transcript:
+    diarization_segments = diarize_audio(audio_path)
+    # Save diarization segments as JSON
+    diarization_path = f"/tmp/{video_id}.speakers.json"
+    with open(diarization_path, 'w') as f:
+        json.dump(diarization_segments, f, indent=2)
+    await upload_blob_async(diarization_path, container='transcripts', blob_name=f'{video_id}.speakers.json')
+    # Generate readable speaker script
+    speaker_script_path = f"/tmp/{video_id}_speaker_script.txt"
+    with open(speaker_script_path, 'w') as f:
+        for seg in diarization_segments:
+            # Find transcript text for this segment
+            text = ''
+            for s in all_segments:
+                if s['start'] >= seg['start'] and s['end'] <= seg['end']:
+                    text += s['text'].strip() + ' '
+            f.write(f"{seg['speaker']} - {seg['start']:.2f} to {seg['end']:.2f}: {text.strip()}\n\n")
+    await upload_blob_async(speaker_script_path, container='transcripts', blob_name=f'{video_id}_speaker_script.txt')
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
