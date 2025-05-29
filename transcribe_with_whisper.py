@@ -53,7 +53,12 @@ async def split_audio_to_chunks(audio_path: str, chunk_length_sec: int = 1800) -
 
 def diarize_audio(audio_path):
     """Run speaker diarization on the audio file and return segments with start, end, and speaker label."""
-    pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization")
+    from pyannote.audio import Pipeline
+    import os
+    hf_token = os.getenv("HUGGINGFACE_TOKEN")
+    if not hf_token:
+        raise RuntimeError("HUGGINGFACE_TOKEN environment variable not set. Please set it to your Hugging Face access token.")
+    pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization", use_auth_token=hf_token)
     diarization = pipeline(audio_path)
     segments = []
     for segment, _, speaker in diarization.itertracks(yield_label=True):
@@ -77,8 +82,6 @@ async def transcribe_and_upload(video_id: str):
     temp_files = []
     all_segments = []
     diarization_segments = []
-    transcript_path = None
-    diarization_path = None
     speaker_script_path = None
     try:
         def chunk_sort_key(x):
@@ -93,31 +96,16 @@ async def transcribe_and_upload(video_id: str):
             all_segments.extend(result.get('segments', []))
         diarization_audio_path = f"/tmp/{chunk_blobs[0]}"
         diarization_segments = diarize_audio(diarization_audio_path)
-        diarization_path = f"/tmp/{video_id}.speakers.json"
-        with open(diarization_path, 'w') as f:
-            json.dump(diarization_segments, f, indent=2)
-        await upload_blob_async(diarization_path, container='transcripts', blob_name=f'{video_id}.speakers.json')
-        for seg in all_segments:
-            seg['speaker'] = None
-            for d in diarization_segments:
-                overlap = (seg['end'] > d['start']) and (seg['start'] < d['end'])
-                if overlap:
-                    seg['speaker'] = d['speaker']
-                    break
-        transcript_path = f"/tmp/{video_id}.json"
-        merged = {"segments": all_segments}
-        with open(transcript_path, 'w') as f:
-            json.dump(merged, f, indent=2)
-        await upload_blob_async(transcript_path, container='transcripts', blob_name=f'{video_id}.json')
+        # Only generate and upload the speaker script .txt file
         speaker_script_path = f"/tmp/{video_id}_speaker_script.txt"
         with open(speaker_script_path, 'w') as f:
             for seg in all_segments:
                 speaker = seg.get('speaker', 'Unknown')
                 f.write(f"{speaker} - {seg['start']:.2f} to {seg['end']:.2f}: {seg['text'].strip()}\n\n")
         await upload_blob_async(speaker_script_path, container='transcripts', blob_name=f'{video_id}_speaker_script.txt')
-        logging.info(f"Transcript and speaker script uploaded for {video_id}")
+        logging.info(f"Speaker script uploaded for {video_id}")
     finally:
-        for path in temp_files + [p for p in [transcript_path, diarization_path, speaker_script_path] if p]:
+        for path in temp_files + [p for p in [speaker_script_path] if p]:
             try:
                 if os.path.exists(path):
                     os.remove(path)
