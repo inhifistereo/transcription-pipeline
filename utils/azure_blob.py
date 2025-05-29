@@ -31,9 +31,15 @@ async def download_blob_async(container, blob_name, file_path):
 
 async def list_blobs_async(container: str, prefix: str = None):
     """List blobs in a container, optionally filtered by prefix."""
-    container_client = blob_service_client.get_container_client(container)
-    async with container_client:
-        blobs = []
-        async for blob in container_client.list_blobs(name_starts_with=prefix):
-            blobs.append(blob.name)
+    AZURE_STORAGE_ACCOUNT_NAME = os.getenv('AZURE_STORAGE_ACCOUNT_NAME')
+    AZURE_STORAGE_ACCOUNT_KEY = os.getenv('AZURE_STORAGE_ACCOUNT_KEY')
+    async with BlobServiceClient(
+        f"https://{AZURE_STORAGE_ACCOUNT_NAME}.blob.core.windows.net",
+        credential=AZURE_STORAGE_ACCOUNT_KEY
+    ) as blob_service_client:
+        container_client = blob_service_client.get_container_client(container)
+        async with container_client:
+            blobs = []
+            async for blob in container_client.list_blobs(name_starts_with=prefix):
+                blobs.append(blob.name)
     return blobs

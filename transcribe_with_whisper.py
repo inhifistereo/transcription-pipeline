@@ -65,48 +65,51 @@ def diarize_audio(audio_path):
     return segments
 
 async def transcribe_and_upload(video_id: str):
-    audio_blob = f"{video_id}.wav"
-    transcript_blob = f"{video_id}.json"
-    audio_path = f"/tmp/{audio_blob}"
-    transcript_path = f"/tmp/{transcript_blob}"
-    diarization_path = f"/tmp/{video_id}.speakers.json"
-    speaker_script_path = f"/tmp/{video_id}_speaker_script.txt"
-    temp_files = [audio_path, transcript_path, diarization_path, speaker_script_path]
-    chunk_paths = []
+    import re
+    from utils.azure_blob import list_blobs_async, download_blob_async, upload_blob_async
+    from utils.whisper_wrapper import transcribe_audio
+    audio_container = os.getenv('AZURE_BLOB_AUDIO_CONTAINER', 'audio')
+    chunk_prefix = f"{video_id}_chunk_"
+    chunk_blobs = await list_blobs_async(audio_container, prefix=chunk_prefix)
+    if not chunk_blobs:
+        logging.error(f"No audio chunks found for video_id {video_id} in container {audio_container}")
+        return
+    temp_files = []
+    all_segments = []
+    diarization_segments = []
+    transcript_path = None
+    diarization_path = None
+    speaker_script_path = None
     try:
-        # Download audio from Azure Blob
-        await download_blob_async(container='audio', blob_name=audio_blob, file_path=audio_path)
-        # Split audio into 30 min chunks
-        chunk_paths = await split_audio_to_chunks(audio_path, chunk_length_sec=1800)
-        temp_files.extend(chunk_paths)
-        # Transcribe each chunk and merge results
-        all_segments = []
-        for chunk_path in chunk_paths:
-            # Transcribe chunk with Whisper
+        def chunk_sort_key(x):
+            match = re.search(r"chunk_(\\d+)", x)
+            return int(match.group(1)) if match else float('inf')
+        for chunk_blob in sorted(chunk_blobs, key=chunk_sort_key):
+            chunk_path = f"/tmp/{chunk_blob}"
+            temp_files.append(chunk_path)
+            await download_blob_async(audio_container, chunk_blob, chunk_path)
             transcript = await transcribe_audio(chunk_path)
             result = json.loads(transcript)
             all_segments.extend(result.get('segments', []))
-        # Run diarization on the full audio file
-        diarization_segments = diarize_audio(audio_path)
-        # Save diarization segments as JSON
+        diarization_audio_path = f"/tmp/{chunk_blobs[0]}"
+        diarization_segments = diarize_audio(diarization_audio_path)
+        diarization_path = f"/tmp/{video_id}.speakers.json"
         with open(diarization_path, 'w') as f:
             json.dump(diarization_segments, f, indent=2)
         await upload_blob_async(diarization_path, container='transcripts', blob_name=f'{video_id}.speakers.json')
-        # Annotate transcript segments with speaker labels using overlap (not strict containment)
         for seg in all_segments:
             seg['speaker'] = None
             for d in diarization_segments:
-                # Check for any overlap between transcript segment and diarization segment
                 overlap = (seg['end'] > d['start']) and (seg['start'] < d['end'])
                 if overlap:
                     seg['speaker'] = d['speaker']
                     break
-        # Save merged transcript as JSON
+        transcript_path = f"/tmp/{video_id}.json"
         merged = {"segments": all_segments}
         with open(transcript_path, 'w') as f:
             json.dump(merged, f, indent=2)
-        await upload_blob_async(transcript_path, container='transcripts', blob_name=transcript_blob)
-        # Generate readable speaker script
+        await upload_blob_async(transcript_path, container='transcripts', blob_name=f'{video_id}.json')
+        speaker_script_path = f"/tmp/{video_id}_speaker_script.txt"
         with open(speaker_script_path, 'w') as f:
             for seg in all_segments:
                 speaker = seg.get('speaker', 'Unknown')
@@ -114,8 +117,7 @@ async def transcribe_and_upload(video_id: str):
         await upload_blob_async(speaker_script_path, container='transcripts', blob_name=f'{video_id}_speaker_script.txt')
         logging.info(f"Transcript and speaker script uploaded for {video_id}")
     finally:
-        # Clean up all temp files, even if an error occurs
-        for path in temp_files:
+        for path in temp_files + [p for p in [transcript_path, diarization_path, speaker_script_path] if p]:
             try:
                 if os.path.exists(path):
                     os.remove(path)
