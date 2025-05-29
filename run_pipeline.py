@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from utils.azure_blob import list_blobs_async
-from download_and_prepare import extract_audio_from_blob_and_upload
+from download_and_prepare import chunk_and_upload_audio
 from transcribe_with_whisper import transcribe_and_upload
 import os
 
@@ -19,7 +19,7 @@ async def run_pipeline():
 
     video_blobs = await list_blobs_async(videos_container)
     for video_blob in video_blobs:
-        await extract_audio_from_blob_and_upload(
+        await chunk_and_upload_audio(
             video_blob_name=video_blob,
             videos_container=videos_container,
             audio_container=audio_container,
