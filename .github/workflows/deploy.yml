@@ -1,0 +1,32 @@
+name: Build and Deploy ACA Pipeline
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    env:
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+      ACR_NAME: ${{ secrets.ACR_NAME }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Build and push images
+        run: |
+          docker build -t $ACR_NAME.azurecr.io/download-and-prepare:latest ./apps/download_and_prepare
+          docker build -t $ACR_NAME.azurecr.io/azure-batch-transcribe:latest ./apps/azure_batch_transcribe
+          docker build -t $ACR_NAME.azurecr.io/diarize-audio:latest ./apps/diarize_audio
+          docker build -t $ACR_NAME.azurecr.io/identify-speakers:latest ./apps/identify_speakers
+          docker build -t $ACR_NAME.azurecr.io/merge-transcript-and-diarization:latest ./apps/merge_transcript_and_diarization
+          az acr login --name $ACR_NAME
+          docker push $ACR_NAME.azurecr.io/download-and-prepare:latest
+          docker push $ACR_NAME.azurecr.io/azure-batch-transcribe:latest
+          docker push $ACR_NAME.azurecr.io/diarize-audio:latest
+          docker push $ACR_NAME.azurecr.io/identify-speakers:latest
+          docker push $ACR_NAME.azurecr.io/merge-transcript-and-diarization:latest
+      - name: Terraform Apply
+        run: |
+          cd infra
+          terraform init
+          terraform apply -auto-approve

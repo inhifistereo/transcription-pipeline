@@ -1,0 +1,4 @@
+yt-dlp
+ffmpeg-python
+azure-storage-blob
+requests
