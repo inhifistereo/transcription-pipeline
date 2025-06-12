@@ -4,7 +4,7 @@
   "features": {
     // Cloud CLIs
     "ghcr.io/devcontainers/features/azure-cli:1": {},
-    "ghcr.io/devcontainers/features/gcloud:1": {},
+    "ghcr.io/devcontainers/features/gcloud:latest": {},
     
     // Infrastructure & DevOps
     "ghcr.io/devcontainers/features/terraform:1": {},
