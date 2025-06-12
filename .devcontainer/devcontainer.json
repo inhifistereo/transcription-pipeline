@@ -1,0 +1,100 @@
+{
+  "name": "Complete Cloud Development Environment",
+  "image": "mcr.microsoft.com/devcontainers/universal:2",
+  "features": {
+    // Cloud CLIs
+    "ghcr.io/devcontainers/features/azure-cli:1": {},
+    "ghcr.io/devcontainers/features/gcloud:1": {},
+    
+    // Infrastructure & DevOps
+    "ghcr.io/devcontainers/features/terraform:1": {},
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {},
+    
+    // Version Control & CI/CD
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    
+    // Programming Languages
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.13"
+    },
+    "ghcr.io/devcontainers/features/dotnet:1": {},
+    
+    // Databases (commonly needed)
+    "ghcr.io/devcontainers/features/postgres:1": {},
+    "ghcr.io/devcontainers/features/redis:1": {}
+  },
+  "postCreateCommand": [
+    "bash", "-c", 
+    "pip install azure-identity azure-mgmt-resource azure-storage-blob azure-keyvault-secrets google-cloud-storage google-cloud-core requests flask django && az bicep install && npm install -g @azure/static-web-apps-cli && echo 'Development environment ready!'"
+  ],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        // Azure Extensions
+        "ms-azuretools.vscode-azureresourcegroups",
+        "ms-azuretools.azure-dev",
+        "ms-azuretools.vscode-azurefunctions", 
+        "ms-azuretools.vscode-azurestaticwebapps",
+        "ms-vscode.azure-account",
+        
+        // Google Cloud
+        "googlecloudtools.cloudcode",
+        
+        // Infrastructure as Code
+        "hashicorp.terraform",
+        "ms-azuretools.vscode-bicep",
+        
+        // Programming Languages
+        "ms-python.python",
+        "ms-python.autopep8",
+        "ms-vscode.vscode-typescript-next",
+        "ms-dotnettools.csharp",
+        
+        // DevOps & Git
+        "github.vscode-github-actions",
+        "ms-vscode.vscode-json",
+        "ms-kubernetes-tools.vscode-kubernetes-tools",
+        "ms-vscode-remote.remote-containers",
+        
+        // Docker
+        "ms-azuretools.vscode-docker",
+        
+        // General Development
+        "esbenp.prettier-vscode",
+        "ms-vscode.vscode-yaml",
+        "redhat.vscode-xml"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "python.defaultInterpreterPath": "/usr/local/python/current/bin/python",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+          "source.organizeImports": true
+        }
+      }
+    }
+  },
+  "forwardPorts": [3000, 5000, 8000, 8080],
+  "portsAttributes": {
+    "3000": {
+      "label": "Frontend Dev Server"
+    },
+    "5000": {
+      "label": "Backend API"
+    },
+    "8000": {
+      "label": "Python/Django Server"
+    },
+    "8080": {
+      "label": "General Web Server"
+    }
+  },
+  "remoteUser": "codespace",
+  "containerEnv": {
+    "WORKSPACE_FOLDER": "${containerWorkspaceFolder}"
+  },
+  "mounts": [
+    "source=${localEnv:HOME}/.ssh,target=/home/codespace/.ssh,type=bind,consistency=cached"
+  ]
+}
