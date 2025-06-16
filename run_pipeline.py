@@ -4,6 +4,10 @@ from utils.azure_blob import list_blobs_async
 from download_and_prepare import chunk_and_upload_audio
 from transcribe_with_whisper import transcribe_and_upload
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 async def run_pipeline():
     """
