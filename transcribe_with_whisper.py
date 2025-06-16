@@ -45,23 +45,26 @@ def diarize_audio(audio_path):
 async def transcribe_and_upload(video_id: str):
     import re
     audio_container = os.getenv('AZURE_BLOB_AUDIO_CONTAINER', 'audio')
-    chunk_prefix = f"{video_id}_chunk_"
-    chunk_blobs = await list_blobs_async(audio_container, prefix=chunk_prefix)
+    chunk_blobs = await list_blobs_async(audio_container)
+    logging.info(f"All audio chunks found: {chunk_blobs}")
     if not chunk_blobs:
-        logging.error(f"No audio chunks found for video_id {video_id} in container 'chunks'")
+        logging.info("No audio chunks found. Skipping transcription.")
         return
     temp_files = []
     all_segments = []
     diarization_segments = []
     speaker_script_path = None
     try:
+        logging.info(f"Video ID: {video_id}")
+        for blob in chunk_blobs:
+            logging.info(f"Blob name: {blob}")
         def chunk_sort_key(x):
             match = re.search(r"chunk_(\\d+)", x)
             return int(match.group(1)) if match else float('inf')
         for chunk_blob in sorted(chunk_blobs, key=chunk_sort_key):
             chunk_path = f"/tmp/{chunk_blob}"
             temp_files.append(chunk_path)
-            await download_blob_async('chunks', chunk_blob, chunk_path)
+            await download_blob_async(audio_container, chunk_blob, chunk_path)
             transcript = await transcribe_audio(chunk_path)
             result = json.loads(transcript)
             all_segments.extend(result.get('segments', []))

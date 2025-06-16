@@ -22,6 +22,16 @@ async def run_pipeline():
     transcripts_container = os.getenv('AZURE_BLOB_TRANSCRIPTS_CONTAINER', 'transcripts')
 
     video_blobs = await list_blobs_async(videos_container)
+    logging.info("Starting video processing step...")
+    if not video_blobs:
+        logging.info("No videos found in the container. Proceeding with audio transcription.")
+        audio_blobs = await list_blobs_async(audio_container)
+        video_ids = set(blob.split('_chunk_')[0] for blob in audio_blobs)
+        for video_id in video_ids:
+            logging.info(f"Processing transcription for video ID: {video_id}")
+            await transcribe_and_upload(video_id)
+        return
+
     for video_blob in video_blobs:
         await chunk_and_upload_audio(
             video_blob_name=video_blob,
@@ -30,6 +40,7 @@ async def run_pipeline():
             processed_container=processed_container
         )
         video_id = os.path.splitext(os.path.basename(video_blob))[0]
+        logging.info(f"Processing video ID: {video_id}")
         await transcribe_and_upload(video_id)
         logging.info(f"Pipeline complete for {video_id}")
 

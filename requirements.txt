@@ -1,9 +1,13 @@
 yt-dlp
 azure-storage-blob
-whisper
+openai-whisper
 ffmpeg-python
 soundfile
 aiohttp
 pyannote.audio
-torch
-numpy
+torch==2.0.1
+triton==2.0.0
+numpy==1.23.5
+scipy==1.9.3
+matplotlib==3.5.3
+dotenv
