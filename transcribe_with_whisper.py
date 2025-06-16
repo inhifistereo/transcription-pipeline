@@ -46,7 +46,7 @@ async def transcribe_and_upload(video_id: str):
     import re
     audio_container = os.getenv('AZURE_BLOB_AUDIO_CONTAINER', 'audio')
     chunk_prefix = f"{video_id}_chunk_"
-    chunk_blobs = await list_blobs_async('chunks', prefix=chunk_prefix)
+    chunk_blobs = await list_blobs_async(audio_container, prefix=chunk_prefix)
     if not chunk_blobs:
         logging.error(f"No audio chunks found for video_id {video_id} in container 'chunks'")
         return
