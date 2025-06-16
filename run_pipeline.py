@@ -29,7 +29,7 @@ async def run_pipeline():
         video_ids = set(blob.split('_chunk_')[0] for blob in audio_blobs)
         for video_id in video_ids:
             logging.info(f"Processing transcription for video ID: {video_id}")
-            await transcribe_and_upload(video_id)
+            await transcribe_and_upload(video_id, enable_diarization=False)  # Disable diarization for stability
         return
 
     for video_blob in video_blobs:
@@ -41,7 +41,7 @@ async def run_pipeline():
         )
         video_id = os.path.splitext(os.path.basename(video_blob))[0]
         logging.info(f"Processing video ID: {video_id}")
-        await transcribe_and_upload(video_id)
+        await transcribe_and_upload(video_id, enable_diarization=False)  # Disable diarization for stability
         logging.info(f"Pipeline complete for {video_id}")
 
 if __name__ == "__main__":

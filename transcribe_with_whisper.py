@@ -42,64 +42,129 @@ def diarize_audio(audio_path):
         })
     return segments
 
-async def transcribe_and_upload(video_id: str):
+async def transcribe_and_upload(video_id: str, enable_diarization: bool = True):
     import re
     audio_container = os.getenv('AZURE_BLOB_AUDIO_CONTAINER', 'audio')
-    chunk_blobs = await list_blobs_async(audio_container)
-    logging.info(f"All audio chunks found: {chunk_blobs}")
+    
+    # Filter chunks for this specific video
+    all_blobs = await list_blobs_async(audio_container)
+    chunk_blobs = [blob for blob in all_blobs if blob.startswith(f"{video_id}_chunk_")]
+    
+    logging.info(f"Processing video: {video_id}")
+    logging.info(f"Found {len(chunk_blobs)} audio chunks: {chunk_blobs}")
+    
     if not chunk_blobs:
-        logging.info("No audio chunks found. Skipping transcription.")
+        logging.info(f"No audio chunks found for video {video_id}. Skipping transcription.")
         return
+    
     temp_files = []
     all_segments = []
     diarization_segments = []
     speaker_script_path = None
+    
     try:
-        logging.info(f"Video ID: {video_id}")
-        for blob in chunk_blobs:
-            logging.info(f"Blob name: {blob}")
+        # Sort chunks by number
         def chunk_sort_key(x):
-            match = re.search(r"chunk_(\\d+)", x)
+            match = re.search(r"chunk_(\d+)", x)
             return int(match.group(1)) if match else float('inf')
-        for chunk_blob in sorted(chunk_blobs, key=chunk_sort_key):
+        
+        sorted_chunks = sorted(chunk_blobs, key=chunk_sort_key)
+        logging.info(f"Processing chunks in order: {sorted_chunks}")
+        
+        # Process each chunk for transcription
+        for chunk_blob in sorted_chunks:
             chunk_path = f"/tmp/{chunk_blob}"
             temp_files.append(chunk_path)
+            
+            logging.info(f"Downloading and transcribing {chunk_blob}")
             await download_blob_async(audio_container, chunk_blob, chunk_path)
             transcript = await transcribe_audio(chunk_path)
             result = json.loads(transcript)
             all_segments.extend(result.get('segments', []))
-        diarization_audio_path = f"/tmp/{chunk_blobs[0]}"
-        diarization_segments = diarize_audio(diarization_audio_path)
-        # Write merged transcript JSON
+            logging.info(f"  Got {len(result.get('segments', []))} segments")
+        
+        # Always upload basic transcript first
         transcript_json_path = f"/tmp/{video_id}_transcript.json"
         with open(transcript_json_path, 'w') as f:
             json.dump({"segments": all_segments}, f, indent=2)
         await upload_blob_async(transcript_json_path, container='transcripts', blob_name=f'{video_id}_transcript.json')
         logging.info(f"Transcript JSON uploaded for {video_id}")
-        # Write diarization JSON
-        diarization_json_path = f"/tmp/{video_id}_diarization.json"
-        with open(diarization_json_path, 'w') as f:
-            json.dump({"segments": diarization_segments}, f, indent=2)
-        await upload_blob_async(diarization_json_path, container='transcripts', blob_name=f'{video_id}_diarization.json')
-        logging.info(f"Diarization JSON uploaded for {video_id}")
-        # Generate and upload the speaker script .txt file
-        speaker_script_path = f"/tmp/{video_id}_speaker_script.txt"
-        with open(speaker_script_path, 'w') as f:
-            for seg in all_segments:
-                speaker = seg.get('speaker', 'Unknown')
-                f.write(f"{speaker} - {seg['start']:.2f} to {seg['end']:.2f}: {seg['text'].strip()}\n\n")
-        await upload_blob_async(speaker_script_path, container='transcripts', blob_name=f'{video_id}_speaker_script.txt')
-        logging.info(f"Speaker script uploaded for {video_id}")
-        temp_files.extend([transcript_json_path, diarization_json_path])
-    finally:
-        for path in temp_files + [p for p in [speaker_script_path] if p]:
+        temp_files.append(transcript_json_path)
+        
+        # Try speaker diarization if enabled
+        if enable_diarization and sorted_chunks:
             try:
-                if os.path.exists(path):
+                logging.info(f"Starting speaker diarization for {video_id}")
+                diarization_audio_path = f"/tmp/{sorted_chunks[0]}"
+                diarization_segments = diarize_audio(diarization_audio_path)
+
+                # Write diarization JSON
+                diarization_json_path = f"/tmp/{video_id}_diarization.json"
+                with open(diarization_json_path, 'w') as f:
+                    json.dump({"segments": diarization_segments}, f, indent=2)
+                await upload_blob_async(diarization_json_path, container='transcripts', blob_name=f'{video_id}_diarization.json')
+                logging.info(f"Diarization JSON uploaded for {video_id}")
+                temp_files.append(diarization_json_path)
+
+                # Generate enhanced speaker script with diarization
+                speaker_script_path = f"/tmp/{video_id}_speaker_script.txt"
+                with open(speaker_script_path, 'w') as f:
+                    # Align transcript segments with speaker segments
+                    for seg in all_segments:
+                        # Find matching speaker for this time segment
+                        speaker = "Unknown"
+                        seg_start = seg.get('start', 0)
+                        for diar_seg in diarization_segments:
+                            if diar_seg['start'] <= seg_start <= diar_seg['end']:
+                                speaker = diar_seg['speaker']
+                                break
+                        f.write(f"{speaker} - {seg['start']:.2f} to {seg['end']:.2f}: {seg['text'].strip()}\n\n")
+                await upload_blob_async(speaker_script_path, container='transcripts', blob_name=f'{video_id}_speaker_script.txt')
+                logging.info(f"Speaker script with diarization uploaded for {video_id}")
+
+            except Exception as e:
+                logging.error(f"Speaker diarization failed for {video_id}: {e}")
+                logging.info(f"Continuing with basic transcript only for {video_id}")
+
+                # Generate basic speaker script with sequential speaker labels
+                speaker_script_path = f"/tmp/{video_id}_speaker_script.txt"
+                speaker_counter = 1
+                with open(speaker_script_path, 'w') as f:
+                    for seg in all_segments:
+                        speaker_label = f"Speaker {speaker_counter}"
+                        f.write(f"{speaker_label} - {seg['start']:.2f} to {seg['end']:.2f}: {seg['text'].strip()}\n\n")
+                        speaker_counter += 1
+                await upload_blob_async(speaker_script_path, container='transcripts', blob_name=f'{video_id}_speaker_script.txt')
+                logging.info(f"Basic speaker script with labels uploaded for {video_id}")
+        else:
+            # Generate basic speaker script with sequential speaker labels
+            speaker_script_path = f"/tmp/{video_id}_speaker_script.txt"
+            speaker_counter = 1
+            with open(speaker_script_path, 'w') as f:
+                for seg in all_segments:
+                    speaker_label = f"Speaker {speaker_counter}"
+                    f.write(f"{speaker_label} - {seg['start']:.2f} to {seg['end']:.2f}: {seg['text'].strip()}\n\n")
+                    speaker_counter += 1
+            await upload_blob_async(speaker_script_path, container='transcripts', blob_name=f'{video_id}_speaker_script.txt')
+            logging.info(f"Basic speaker script with labels uploaded for {video_id}")
+            
+    except Exception as e:
+        logging.error(f"Failed to process transcription for {video_id}: {e}")
+        raise
+    finally:
+        # Clean up temp files
+        all_temp_files = temp_files + ([speaker_script_path] if speaker_script_path else [])
+        for path in all_temp_files:
+            try:
+                if path and os.path.exists(path):
                     os.remove(path)
+                    logging.debug(f"Cleaned up temp file: {path}")
             except Exception as e:
                 logging.warning(f"Failed to remove temp file {path}: {e}")
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     import sys
-    asyncio.run(transcribe_and_upload(sys.argv[1]))
+    video_id = sys.argv[1] if len(sys.argv) > 1 else "test"
+    enable_diarization = len(sys.argv) < 3 or sys.argv[2].lower() != "false"
+    asyncio.run(transcribe_and_upload(video_id, enable_diarization))
