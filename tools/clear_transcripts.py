@@ -1,3 +1,9 @@
+import sys
+from pathlib import Path
+
+# Ensure project root is in sys.path for imports
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
 import asyncio
 import logging
 from utils.azure_blob import list_blobs_async, delete_blob_async

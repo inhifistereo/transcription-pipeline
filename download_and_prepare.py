@@ -19,6 +19,9 @@ async def chunk_and_upload_audio(video_blob_name: str, videos_container: str = '
     # Extract full audio to temp wav
     full_wav_path = f'{video_id}_full.wav'
     await extract_audio_to_wav(tmp_video_path, full_wav_path)
+    # Upload full wav for diarization
+    await upload_blob_async(full_wav_path, container=audio_container, blob_name=full_wav_path)
+    logging.info(f"Uploaded full audio {full_wav_path} to {audio_container}")
     # Get total duration using ffmpeg probe
     probe = ffmpeg.probe(full_wav_path)
     total_sec = float(probe['format']['duration'])

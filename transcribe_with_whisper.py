@@ -29,18 +29,42 @@ from pyannote.audio import Pipeline
 
 def diarize_audio(audio_path):
     hf_token = os.getenv("HUGGINGFACE_TOKEN")
+    logging.info(f"[Diarization] Checking Hugging Face token: {'FOUND' if hf_token else 'NOT FOUND'}")
     if not hf_token:
         raise RuntimeError("HUGGINGFACE_TOKEN environment variable not set. Please set it to your Hugging Face access token.")
-    pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization", use_auth_token=hf_token)
-    diarization = pipeline(audio_path)
-    segments = []
-    for segment, _, speaker in diarization.itertracks(yield_label=True):
-        segments.append({
-            "start": segment.start,
-            "end": segment.end,
-            "speaker": speaker
+    try:
+        logging.info("[Diarization] Loading pyannote pipeline...")
+        pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization", use_auth_token=hf_token)
+        logging.info("[Diarization] Pipeline loaded. Running diarization...")
+        diarization = pipeline(audio_path)
+        segments = []
+        for segment, _, speaker in diarization.itertracks(yield_label=True):
+            segments.append({
+                "start": segment.start,
+                "end": segment.end,
+                "speaker": speaker
+            })
+        logging.info(f"[Diarization] Got {len(segments)} diarization segments. Example: {segments[:3]}")
+        return segments
+    except Exception as e:
+        logging.error(f"[Diarization] Exception during diarization: {e}", exc_info=True)
+        raise
+
+# Map pyannote speaker labels to Speaker 1, Speaker 2, ...
+def map_speaker_labels(diarization_segments):
+    speaker_map = {}
+    mapped_segments = []
+    speaker_counter = 1
+    for seg in diarization_segments:
+        orig_label = seg['speaker']
+        if orig_label not in speaker_map:
+            speaker_map[orig_label] = f"Speaker {speaker_counter}"
+            speaker_counter += 1
+        mapped_segments.append({
+            **seg,
+            'speaker': speaker_map[orig_label]
         })
-    return segments
+    return mapped_segments, speaker_map
 
 async def transcribe_and_upload(video_id: str, enable_diarization: bool = True):
     import re
@@ -92,16 +116,22 @@ async def transcribe_and_upload(video_id: str, enable_diarization: bool = True):
         temp_files.append(transcript_json_path)
         
         # Try speaker diarization if enabled
-        if enable_diarization and sorted_chunks:
+        if enable_diarization:
             try:
-                logging.info(f"Starting speaker diarization for {video_id}")
-                diarization_audio_path = f"/tmp/{sorted_chunks[0]}"
-                diarization_segments = diarize_audio(diarization_audio_path)
+                # Download full audio for diarization
+                full_audio_blob = f"{video_id}_full.wav"
+                full_audio_path = f"/tmp/{video_id}_full.wav"
+                logging.info(f"Downloading full audio for diarization: {full_audio_blob}")
+                await download_blob_async(audio_container, full_audio_blob, full_audio_path)
+                temp_files.append(full_audio_path)
+                logging.info(f"Starting speaker diarization for {video_id} using full audio")
+                diarization_segments = diarize_audio(full_audio_path)
+                mapped_segments, speaker_map = map_speaker_labels(diarization_segments)
 
-                # Write diarization JSON
+                # Write diarization JSON with mapped speaker labels
                 diarization_json_path = f"/tmp/{video_id}_diarization.json"
                 with open(diarization_json_path, 'w') as f:
-                    json.dump({"segments": diarization_segments}, f, indent=2)
+                    json.dump({"segments": mapped_segments}, f, indent=2)
                 await upload_blob_async(diarization_json_path, container='transcripts', blob_name=f'{video_id}_diarization.json')
                 logging.info(f"Diarization JSON uploaded for {video_id}")
                 temp_files.append(diarization_json_path)
@@ -114,7 +144,7 @@ async def transcribe_and_upload(video_id: str, enable_diarization: bool = True):
                         # Find matching speaker for this time segment
                         speaker = "Unknown"
                         seg_start = seg.get('start', 0)
-                        for diar_seg in diarization_segments:
+                        for diar_seg in mapped_segments:
                             if diar_seg['start'] <= seg_start <= diar_seg['end']:
                                 speaker = diar_seg['speaker']
                                 break
@@ -123,7 +153,7 @@ async def transcribe_and_upload(video_id: str, enable_diarization: bool = True):
                 logging.info(f"Speaker script with diarization uploaded for {video_id}")
 
             except Exception as e:
-                logging.error(f"Speaker diarization failed for {video_id}: {e}")
+                logging.error(f"Speaker diarization failed for {video_id}: {e}", exc_info=True)
                 logging.info(f"Continuing with basic transcript only for {video_id}")
 
                 # Generate basic speaker script with sequential speaker labels
@@ -149,7 +179,7 @@ async def transcribe_and_upload(video_id: str, enable_diarization: bool = True):
             logging.info(f"Basic speaker script with labels uploaded for {video_id}")
             
     except Exception as e:
-        logging.error(f"Failed to process transcription for {video_id}: {e}")
+        logging.error(f"Failed to process transcription for {video_id}: {e}", exc_info=True)
         raise
     finally:
         # Clean up temp files
